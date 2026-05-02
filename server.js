@@ -1,16 +1,17 @@
-⁸import express from "express";
-import fetch from "node-fetch";
+import express from "express";
 import cors from "cors";
 
 const app = express();
-app.use(express.json({ limit: "20mb" }));
+const PORT = process.env.PORT || 10000;
+
+// 🔐 TU API KEY (ponla en Render luego)
+const API_KEY = process.env.GEMINI_API_KEY;
+
 app.use(cors());
+app.use(express.json());
 
-// 🔑 TU API KEY (pon la tuya)
-const API_KEY = "AIzaSyCqPQqC0ytcTHF1kcCBiTJzdpjIlCYN6T8";
-
-// 🔥 PALABRAS PROHIBIDAS (filtro rápido)
-const palabrasProhibidas = [
+// 🔥 PALABRAS PROHIBIDAS
+const palabras = [
   "xxx",
   "porno",
   "porn",
@@ -22,28 +23,34 @@ const palabrasProhibidas = [
   "escort"
 ];
 
-// 🔍 función filtro rápido
-function contienePalabrasProhibidas(texto = "") {
+// 🔍 FILTRO RÁPIDO
+function contieneProhibido(texto = "") {
   const t = texto.toLowerCase();
-  return palabrasProhibidas.some(p => t.includes(p));
+  return palabras.some(p => t.includes(p));
 }
 
 // 🚀 ENDPOINT
 app.post("/verificar", async (req, res) => {
   const { texto } = req.body;
 
-  // 1. FILTRO RÁPIDO
-  if (contienePalabrasProhibidas(texto)) {
+  if (!texto) {
+    return res.json({
+      permitido: false,
+      error: "No hay texto"
+    });
+  }
+
+  // 🔥 1. FILTRO RÁPIDO
+  if (contieneProhibido(texto)) {
     return res.json({
       permitido: false,
       bloqueado: true,
-      resultado: "SI",
-      razon: "Bloqueado por palabras prohibidas"
+      razon: "Filtro rápido detectó contenido prohibido"
     });
   }
 
   try {
-    // 2. IA GEMINI
+    // 🤖 2. IA GEMINI
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
       {
@@ -67,7 +74,8 @@ Bloquea si hay:
 - pornografía
 - desnudos
 
-Texto: ${texto}
+Texto:
+${texto}
 `
                 }
               ]
@@ -79,31 +87,35 @@ Texto: ${texto}
 
     const data = await response.json();
 
-    const respuestaIA =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    let bloqueado = false;
 
-    const bloqueado = respuestaIA.includes("true");
+    try {
+      const textoIA = data.candidates[0].content.parts[0].text;
+      const json = JSON.parse(textoIA);
+      bloqueado = json.bloqueado;
+    } catch (e) {
+      console.log("Error interpretando IA");
+    }
 
     return res.json({
       permitido: !bloqueado,
-      bloqueado: bloqueado,
-      resultado: bloqueado ? "SI" : "NO",
-      razon: "Evaluado por IA"
+      bloqueado,
+      resultado: bloqueado ? "NO" : "SI",
+      razon: bloqueado ? "IA detectó contenido" : "Contenido limpio"
     });
 
   } catch (error) {
+    console.log(error);
+
     return res.json({
       permitido: true,
       bloqueado: false,
-      resultado: "NO",
-      razon: "Error IA, permitido por seguridad"
+      razon: "Error IA, permitido por seguridad básica"
     });
   }
 });
 
-// 🟢 PUERTO (Render usa este)
-const PORT = process.env.PORT || 10000;
-
+// 🌐 SERVER
 app.listen(PORT, () => {
   console.log("Servidor corriendo en puerto " + PORT);
 });
