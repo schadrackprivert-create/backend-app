@@ -8,10 +8,10 @@ const app = express();
 app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.GEMINI_API_KEY;
 
-// seguridad
 app.use(helmet());
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "15mb" }));
 app.use(cors({ origin: "*" }));
 
 app.use(
@@ -21,32 +21,325 @@ app.use(
   })
 );
 
-// TEST
+function limpiarBase64(imagen = "") {
+  let limpio = String(imagen || "").trim();
+
+  if (limpio.includes(",")) {
+    limpio = limpio.split(",").pop();
+  }
+
+  return limpio
+    .replace(/^data:image\/\w+;base64,/i, "")
+    .replace(/\s/g, "");
+}
+
+function limpiarJson(texto = "") {
+  return String(texto)
+    .replace(/```json/gi, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
 app.get("/", (req, res) => {
-  res.send("Servidor funcionando 🚀");
+  res.send("Backend funcionando 🔥");
 });
 
-// TEXTO
+// ✅ IA REAL PARA TEXTO
 app.post("/verificar", async (req, res) => {
   try {
-    return res.json({ permitido: true });
+    const { texto = "" } = req.body;
+
+    if (!API_KEY) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Falta GEMINI_API_KEY en Render",
+      });
+    }
+
+    const contenido = String(texto || "").trim();
+
+    if (!contenido) {
+      return res.json({
+        permitido: true,
+        bloqueado: false,
+        razon: "Texto vacío permitido",
+      });
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 100,
+          },
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_HATE_SPEECH",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+          ],
+          contents: [
+            {
+              parts: [
+                {
+                  text: `
+Eres un moderador de una app social turística.
+
+Responde SOLO JSON válido:
+{"bloqueado": true, "razon": "motivo"}
+o
+{"bloqueado": false, "razon": "permitido"}
+
+Bloquea si el texto contiene:
+- contenido sexual explícito
+- pornografía
+- venta sexual
+- acoso
+- odio
+- amenazas
+- violencia extrema
+- drogas o armas
+- insultos graves
+
+No bloquees saludos, turismo, viajes, fotos normales o comentarios normales.
+                  `,
+                },
+                {
+                  text: contenido,
+                },
+              ],
+            },
+          ],
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (data?.promptFeedback?.blockReason) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Bloqueado por seguridad de Google",
+      });
+    }
+
+    const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    if (!textoIA) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "IA no respondió",
+      });
+    }
+
+    let json;
+    try {
+      json = JSON.parse(limpiarJson(textoIA));
+    } catch {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Respuesta IA inválida",
+      });
+    }
+
+    return res.json({
+      permitido: json.bloqueado === false,
+      bloqueado: json.bloqueado !== false,
+      razon: json.razon || "Evaluación completada",
+    });
   } catch (error) {
-    res.json({ permitido: false });
+    console.log("ERROR TEXTO:", error);
+    return res.json({
+      permitido: false,
+      bloqueado: true,
+      razon: "Error técnico IA texto",
+    });
   }
 });
 
-// IMAGEN
+// ✅ IA REAL PARA IMAGEN
 app.post("/verificar-imagen", async (req, res) => {
   try {
-    const { imagen } = req.body;
+    const { imagen, tipo = "post" } = req.body;
 
-    if (!imagen) {
-      return res.json({ permitido: false });
+    if (!API_KEY) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Falta GEMINI_API_KEY en Render",
+      });
     }
 
-    return res.json({ permitido: true });
+    if (!imagen) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "No llegó imagen",
+      });
+    }
+
+    const base64 = limpiarBase64(imagen);
+
+    if (!base64 || base64.length < 1000) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Imagen inválida o muy pequeña",
+      });
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          generationConfig: {
+            temperature: 0,
+            maxOutputTokens: 120,
+          },
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_HATE_SPEECH",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_HARASSMENT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+            {
+              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+          ],
+          contents: [
+            {
+              parts: [
+                {
+                  text: `
+Analiza esta imagen para una app social turística.
+
+Responde SOLO JSON válido:
+{"bloqueado": true, "razon": "motivo"}
+o
+{"bloqueado": false, "razon": "permitido"}
+
+Bloquea si la imagen contiene:
+- desnudez explícita
+- pornografía
+- acto sexual
+- partes íntimas visibles
+- violencia gráfica
+- sangre extrema
+- armas usadas para amenazar
+- drogas ilegales
+- odio o símbolos extremistas
+
+No bloquees:
+- selfies normales
+- paisajes
+- comida
+- playas sin desnudez explícita
+- ropa normal
+- fotos familiares
+- fotos turísticas normales
+
+Tipo de imagen: ${tipo}
+                  `,
+                },
+                {
+                  inlineData: {
+                    mimeType: "image/jpeg",
+                    data: base64,
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (data?.promptFeedback?.blockReason) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Imagen bloqueada por seguridad de Google",
+      });
+    }
+
+    const finishReason = data?.candidates?.[0]?.finishReason || "";
+    const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    if (finishReason === "SAFETY") {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Imagen bloqueada por filtros de seguridad",
+      });
+    }
+
+    if (!textoIA) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "IA no respondió",
+      });
+    }
+
+    let json;
+    try {
+      json = JSON.parse(limpiarJson(textoIA));
+    } catch {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Respuesta IA inválida",
+      });
+    }
+
+    return res.json({
+      permitido: json.bloqueado === false,
+      bloqueado: json.bloqueado !== false,
+      razon: json.razon || "Evaluación completada",
+    });
   } catch (error) {
-    res.json({ permitido: false });
+    console.log("ERROR IMAGEN:", error);
+    return res.json({
+      permitido: false,
+      bloqueado: true,
+      razon: "Error técnico IA imagen",
+    });
   }
 });
 
