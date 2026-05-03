@@ -15,52 +15,78 @@ const API_KEY = process.env.GEMINI_API_KEY;
 app.use(helmet());
 app.use(express.json({ limit: "10mb" }));
 
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type"],
-  })
-);
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"],
+}));
 
-// 🔥 Anti spam
-const limiter = rateLimit({
+app.use(rateLimit({
   windowMs: 60 * 1000,
   max: 60,
-});
-app.use(limiter);
+}));
 
-// =============================
-// 🔥 PALABRAS PROHIBIDAS
-// =============================
+function limpiarBase64(imagen = "") {
+  let limpio = String(imagen || "").trim();
+
+  if (limpio.includes(",")) {
+    limpio = limpio.split(",").pop() || "";
+  }
+
+  return limpio
+    .replace(/^data:image\/\w+;base64,/i, "")
+    .replace(/\s/g, "");
+}
+
+function limpiarJson(texto = "") {
+  return String(texto || "")
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
+}
+
+function parseJsonSeguro(texto = "") {
+  try {
+    return JSON.parse(limpiarJson(texto));
+  } catch {
+    return null;
+  }
+}
+
 const palabrasProhibidas = [
   "xxx",
   "porno",
   "porn",
-  "sexo",
-  "desnudo",
-  "nude",
   "onlyfans",
-  "puta",
   "escort",
+  "desnudo",
+  "desnuda",
+  "nude",
+  "nudes",
 ];
 
 function contienePalabrasProhibidas(texto = "") {
-  const t = texto.toLowerCase();
+  const t = String(texto || "").toLowerCase();
   return palabrasProhibidas.some((p) => t.includes(p));
 }
 
-// =============================
-// 🔥 VERIFICAR TEXTO
-// =============================
 app.post("/verificar", async (req, res) => {
   const { texto } = req.body;
+
+  if (!texto || !String(texto).trim()) {
+    return res.json({
+      permitido: true,
+      bloqueado: false,
+      razon: "Texto vacío permitido",
+    });
+  }
 
   if (contienePalabrasProhibidas(texto)) {
     return res.json({
       permitido: false,
       bloqueado: true,
-      razon: "Texto prohibido detectado",
+      esSexual: true,
+      razon: "Texto prohibido",
     });
   }
 
@@ -71,16 +97,30 @@ app.post("/verificar", async (req, res) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          safetySettings: [
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
+          ],
           generationConfig: { temperature: 0 },
           contents: [
             {
               parts: [
                 {
-                  text: `Analiza este texto. 
-Bloquea solo si es sexual explícito, odio o violencia.
-Responde SOLO JSON: {"bloqueado": true/false}`,
+                  text: `
+Analiza este texto para una red social turística.
+
+Responde SOLO JSON válido:
+{"bloqueado": true, "razon": "motivo"}
+o
+{"bloqueado": false, "razon": "texto permitido"}
+
+Bloquea si hay contenido sexual explícito, pornografía, odio grave, amenazas o violencia extrema.
+No bloquees conversación normal, turismo, amistad, familia o texto inocente.
+`,
                 },
-                { text: texto },
+                { text: String(texto) },
               ],
             },
           ],
@@ -90,99 +130,107 @@ Responde SOLO JSON: {"bloqueado": true/false}`,
 
     const data = await response.json();
 
-    const textoIA =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    if (!textoIA) {
+    if (data.promptFeedback?.blockReason === "SAFETY") {
       return res.json({
         permitido: false,
         bloqueado: true,
-        razon: "IA no respondió → bloqueado",
+        razon: "Texto bloqueado por seguridad Google",
       });
     }
 
-    let bloqueado = true;
+    const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const json = parseJsonSeguro(textoIA);
 
-    try {
-      const limpio = textoIA
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
-
-      const json = JSON.parse(limpio);
-      bloqueado = json.bloqueado !== false;
-    } catch {
-      bloqueado = true;
+    if (!json) {
+      return res.json({
+        permitido: true,
+        bloqueado: false,
+        razon: "IA no respondió JSON válido, texto permitido",
+      });
     }
+
+    const bloqueado = json.bloqueado === true;
 
     return res.json({
       permitido: !bloqueado,
       bloqueado,
-      razon: bloqueado ? "Texto no permitido" : "Texto permitido",
+      razon: json.razon || (bloqueado ? "Texto bloqueado" : "Texto permitido"),
     });
   } catch (error) {
-    console.log(error);
+    console.log("Error IA texto:", error);
+
     return res.json({
-      permitido: false,
-      bloqueado: true,
-      razon: "Error IA → bloqueado",
+      permitido: true,
+      bloqueado: false,
+      razon: "Error IA texto, permitido",
     });
   }
 });
 
-// =============================
-// 🔥 VERIFICAR IMAGEN (🔥 PRO REAL)
-// =============================
 app.post("/verificar-imagen", async (req, res) => {
-  const { imagen } = req.body;
-
-  if (!imagen) {
-    return res.json({
-      permitido: false,
-      bloqueado: true,
-      razon: "No llegó imagen",
-    });
-  }
-
   try {
+    const { imagen, tipo } = req.body;
+    const imagenLimpia = limpiarBase64(imagen);
+
+    console.log("Imagen recibida length:", imagenLimpia.length, "tipo:", tipo || "general");
+
+    if (!imagenLimpia || imagenLimpia.length < 1000) {
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: "Imagen inválida o demasiado pequeña",
+      });
+    }
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // 🔥 Seguridad REAL (IMPORTANTE)
           safetySettings: [
-            {
-              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-              category: "HARM_CATEGORY_HATE_SPEECH",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_LOW_AND_ABOVE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
           ],
-
           generationConfig: { temperature: 0 },
-
           contents: [
             {
               parts: [
                 {
-                  text: `Analiza esta imagen.
+                  text: `
+Analiza esta imagen de forma objetiva para una red social turística.
 
-Bloquea SOLO si contiene:
-- desnudos
+Responde SOLO JSON válido:
+{"bloqueado": true, "razon": "motivo"}
+o
+{"bloqueado": false, "razon": "imagen permitida"}
+
+Bloquea si hay:
+- desnudez
+- genitales visibles
+- acto sexual
+- pornografía
+- senos claramente desnudos
 - contenido sexual explícito
-- actos sexuales
+- texto sexual explícito dentro de la imagen
 
-Responde SOLO JSON:
-{"bloqueado": true/false}`,
+No bloquees:
+- selfies normales
+- rostro normal
+- turismo
+- paisaje
+- comida
+- familia
+- ropa normal
+- playa normal sin desnudez
+- foto de perfil normal
+`,
                 },
                 {
                   inlineData: {
                     mimeType: "image/jpeg",
-                    data: imagen,
+                    data: imagenLimpia,
                   },
                 },
               ],
@@ -193,68 +241,101 @@ Responde SOLO JSON:
     );
 
     const data = await response.json();
+    console.log("RESPUESTA IA IMAGEN:", JSON.stringify(data));
 
-    console.log("IA imagen:", JSON.stringify(data));
-
-    // 🔥 BLOQUEO POR SEGURIDAD DE GOOGLE
-    if (data.promptFeedback?.blockReason) {
+    if (data.promptFeedback?.blockReason === "SAFETY") {
       return res.json({
         permitido: false,
         bloqueado: true,
+        nsfw: true,
+        adulto: true,
+        esSexual: true,
         razon: "Bloqueado por seguridad Google",
       });
     }
 
-    const textoIA =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const finishReason = data?.candidates?.[0]?.finishReason || "";
+    const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-    if (!textoIA) {
+    if (finishReason === "SAFETY") {
       return res.json({
         permitido: false,
         bloqueado: true,
-        razon: "IA no respondió → bloqueado",
+        nsfw: true,
+        adulto: true,
+        esSexual: true,
+        razon: "Bloqueado por seguridad IA",
       });
     }
 
-    let bloqueado = true;
-
-    try {
-      const limpio = textoIA
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
-
-      const json = JSON.parse(limpio);
-      bloqueado = json.bloqueado !== false;
-    } catch {
-      bloqueado = true;
+    if (!textoIA) {
+      return res.json({
+        permitido: true,
+        bloqueado: false,
+        razon: "IA no respondió → permitido",
+      });
     }
+
+    const json = parseJsonSeguro(textoIA);
+
+    if (!json) {
+      const texto = String(textoIA).toLowerCase();
+
+      const esSexual =
+        texto.includes("desnudo") ||
+        texto.includes("desnuda") ||
+        texto.includes("sexual") ||
+        texto.includes("porn") ||
+        texto.includes("genital") ||
+        texto.includes("nude") ||
+        texto.includes("explicit");
+
+      return res.json({
+        permitido: !esSexual,
+        bloqueado: esSexual,
+        nsfw: esSexual,
+        adulto: esSexual,
+        esSexual,
+        razon: esSexual ? "Contenido sexual detectado" : "Imagen permitida",
+      });
+    }
+
+    const razon = String(json.razon || "").toLowerCase();
+
+    const bloqueado =
+      json.bloqueado === true ||
+      razon.includes("sexual") ||
+      razon.includes("desnudo") ||
+      razon.includes("desnuda") ||
+      razon.includes("porn") ||
+      razon.includes("genital") ||
+      razon.includes("senos") ||
+      razon.includes("acto sexual") ||
+      razon.includes("adulto");
 
     return res.json({
       permitido: !bloqueado,
       bloqueado,
-      razon: bloqueado
-        ? "Imagen sexual detectada"
-        : "Imagen permitida",
+      nsfw: bloqueado,
+      adulto: bloqueado,
+      esSexual: bloqueado,
+      razon: json.razon || (bloqueado ? "Imagen bloqueada" : "Imagen permitida"),
     });
   } catch (error) {
-    console.log(error);
+    console.log("ERROR IA IMAGEN:", error);
+
     return res.json({
-      permitido: false,
-      bloqueado: true,
-      razon: "Error IA → bloqueado",
+      permitido: true,
+      bloqueado: false,
+      razon: "Error técnico → permitido",
     });
   }
 });
 
-// =============================
-// TEST
-// =============================
 app.get("/", (req, res) => {
-  res.send("Backend funcionando 🚀");
+  res.send("Backend Glopost funcionando 🚀");
 });
 
-// =============================
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
