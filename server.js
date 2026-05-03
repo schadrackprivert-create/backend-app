@@ -12,39 +12,45 @@ app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.GEMINI_API_KEY;
 
+// =============================
+// 🔥 MIDDLEWARE
+// =============================
 app.use(helmet());
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "5mb" }));
 
 app.use(
   cors({
     origin: "*",
     methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type"],
   })
 );
 
 // 🔥 Anti spam
-app.use(
-  rateLimit({
-    windowMs: 60 * 1000,
-    max: 40,
-  })
-);
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+});
+app.use(limiter);
 
 // =============================
-// 🔥 PALABRAS PROHIBIDAS (FUERTE)
+// 🔥 PALABRAS PROHIBIDAS
 // =============================
 const palabrasProhibidas = [
   "xxx",
   "porno",
   "porn",
+  "sexo",
+  "desnudo",
+  "nude",
   "onlyfans",
-  "cp",
+  "puta",
+  "escort",
 ];
 
 function contienePalabrasProhibidas(texto = "") {
-  return palabrasProhibidas.some((p) =>
-    texto.toLowerCase().includes(p)
-  );
+  const t = texto.toLowerCase();
+  return palabrasProhibidas.some((p) => t.includes(p));
 }
 
 // =============================
@@ -53,13 +59,11 @@ function contienePalabrasProhibidas(texto = "") {
 app.post("/verificar", async (req, res) => {
   const { texto } = req.body;
 
-  if (!texto) return res.json({ permitido: true });
-
   if (contienePalabrasProhibidas(texto)) {
     return res.json({
       permitido: false,
       bloqueado: true,
-      razon: "Texto prohibido",
+      razon: "Filtro rápido detectó contenido prohibido",
     });
   }
 
@@ -76,18 +80,19 @@ app.post("/verificar", async (req, res) => {
               parts: [
                 {
                   text: `
+Eres un moderador de contenido.
+
 Responde SOLO JSON:
 {"bloqueado": true}
 o
 {"bloqueado": false}
 
-Bloquea SOLO si hay:
-- sexo explícito
-- pornografía
-- violencia fuerte
-- odio grave
+Bloquea si hay:
+- contenido sexual
+- violencia
+- odio
 
-Texto normal → permitido
+Permite texto normal.
 `,
                 },
                 { text: texto },
@@ -100,27 +105,33 @@ Texto normal → permitido
 
     const data = await response.json();
 
-    let textoIA =
+    const textoIA =
       data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
     let bloqueado = false;
 
     try {
-      textoIA = textoIA.replace(/```json/g, "").replace(/```/g, "");
-      const json = JSON.parse(textoIA);
+      const limpio = textoIA
+        .replace(/```json/g, "")
+        .replace(/```/g, "")
+        .trim();
+
+      const json = JSON.parse(limpio);
       bloqueado = json.bloqueado === true;
     } catch {
-      bloqueado = false; // 🔥 si falla → permite
+      bloqueado = false;
     }
 
     return res.json({
       permitido: !bloqueado,
       bloqueado,
+      razon: bloqueado ? "Texto prohibido" : "Texto permitido",
     });
   } catch {
     return res.json({
       permitido: true,
       bloqueado: false,
+      razon: "Error IA → permitido",
     });
   }
 });
@@ -133,8 +144,9 @@ app.post("/verificar-imagen", async (req, res) => {
 
   if (!imagen) {
     return res.json({
-      permitido: true,
-      bloqueado: false,
+      permitido: false,
+      bloqueado: true,
+      razon: "No llegó imagen",
     });
   }
 
@@ -145,29 +157,36 @@ app.post("/verificar-imagen", async (req, res) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          safetySettings: [
+            {
+              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+              threshold: "BLOCK_MEDIUM_AND_ABOVE",
+            },
+          ],
           generationConfig: { temperature: 0 },
           contents: [
             {
               parts: [
                 {
                   text: `
-Responde SOLO JSON:
-{"bloqueado": true}
-o
-{"bloqueado": false}
+Analiza esta imagen.
 
-BLOQUEA si hay:
-- desnudos
-- partes íntimas
-- sexo
-- porno
-- contenido sexual explícito
+Bloquea SOLO si hay:
+- desnudos reales
+- partes íntimas visibles
+- sexo explícito
+- pornografía
 
 NO bloquear:
 - selfies
-- ropa normal
+- fotos normales
 - turismo
-- cara
+- ropa normal
+
+Responde SOLO JSON:
+{"bloqueado": true, "razon": "explicación"}
+o
+{"bloqueado": false, "razon": "foto normal"}
 `,
                 },
                 {
@@ -185,44 +204,60 @@ NO bloquear:
 
     const data = await response.json();
 
-    const finishReason =
-      data?.candidates?.[0]?.finishReason || "";
-
-    let textoIA =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
     console.log("IA imagen:", JSON.stringify(data));
 
-    // 🔥 Gemini bloqueó → contenido sensible
-    if (finishReason === "SAFETY") {
+    // 🔥 Bloqueo directo por Google
+    if (data.promptFeedback?.blockReason === "SAFETY") {
       return res.json({
         permitido: false,
         bloqueado: true,
-        esSexual: true,
+        nsfw: true,
+        razon: "Bloqueado por seguridad Google",
+      });
+    }
+
+    const textoIA =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    if (!textoIA) {
+      return res.json({
+        permitido: true,
+        bloqueado: false,
+        razon: "IA no respondió → permitido",
       });
     }
 
     let bloqueado = false;
+    let razon = "Imagen permitida";
 
     try {
-      textoIA = textoIA.replace(/```json/g, "").replace(/```/g, "").trim();
-      const json = JSON.parse(textoIA);
+      const limpio = textoIA
+        .replace(/```json/g, "")
+        .replace(/```/g, "")
+        .trim();
+
+      const json = JSON.parse(limpio);
+
       bloqueado = json.bloqueado === true;
+      razon = json.razon || razon;
     } catch {
       bloqueado = false;
+      razon = "Respuesta IA inválida → permitido";
     }
 
     return res.json({
       permitido: !bloqueado,
       bloqueado,
-      esSexual: bloqueado,
+      nsfw: bloqueado,
+      razon,
     });
   } catch (error) {
-    console.log("Error IA imagen:", error);
+    console.log("ERROR IA:", error);
 
     return res.json({
       permitido: true,
       bloqueado: false,
+      razon: "Error IA → permitido",
     });
   }
 });
@@ -231,7 +266,7 @@ NO bloquear:
 // TEST
 // =============================
 app.get("/", (req, res) => {
-  res.send("Backend IA PRO funcionando 🚀");
+  res.send("Backend funcionando 🚀");
 });
 
 // =============================
