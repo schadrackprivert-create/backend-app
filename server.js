@@ -12,264 +12,114 @@ app.set("trust proxy", 1);
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.GEMINI_API_KEY;
 
-// =============================
-// 🔥 MIDDLEWARE
-// =============================
+// Middlewares
 app.use(helmet());
-app.use(express.json({ limit: "5mb" }));
-
-app.use(
-  cors({
+app.use(express.json({ limit: "5mb" })); // Suficiente para imágenes base64
+app.use(cors({
     origin: "*",
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
-  })
-);
+}));
 
-// 🔥 Anti spam
 const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 30,
+    windowMs: 60 * 1000,
+    max: 30,
 });
 app.use(limiter);
 
 // =============================
-// 🔥 PALABRAS PROHIBIDAS
-// =============================
-const palabrasProhibidas = [
-  "xxx",
-  "porno",
-  "porn",
-  "sexo",
-  "desnudo",
-  "nude",
-  "onlyfans",
-  "puta",
-  "escort",
-];
-
-function contienePalabrasProhibidas(texto = "") {
-  const t = texto.toLowerCase();
-  return palabrasProhibidas.some((p) => t.includes(p));
-}
-
-// =============================
 // 🔥 VERIFICAR TEXTO
 // =============================
+const palabrasProhibidas = ["xxx", "porno", "porn", "sexo", "puta", "escort"];
+
+function contienePalabrasProhibidas(texto = "") {
+    const t = texto.toLowerCase();
+    return palabrasProhibidas.some((p) => t.includes(p));
+}
+
 app.post("/verificar", async (req, res) => {
-  const { texto } = req.body;
+    const { texto } = req.body;
 
-  if (contienePalabrasProhibidas(texto)) {
-    return res.json({
-      permitido: false,
-      bloqueado: true,
-      razon: "Filtro rápido detectó contenido prohibido",
-    });
-  }
-
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          generationConfig: { temperature: 0 },
-          contents: [
-            {
-              parts: [
-                {
-                  text: `
-Eres un moderador de contenido.
-
-Responde SOLO JSON:
-{"bloqueado": true}
-o
-{"bloqueado": false}
-
-Bloquea si hay:
-- contenido sexual
-- violencia
-- odio
-
-Permite texto normal.
-`,
-                },
-                { text: texto },
-              ],
-            },
-          ],
-        }),
-      }
-    );
-
-    const data = await response.json();
-
-    const textoIA =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    let bloqueado = false;
-
-    try {
-      const limpio = textoIA
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
-
-      const json = JSON.parse(limpio);
-      bloqueado = json.bloqueado === true;
-    } catch {
-      bloqueado = false;
+    if (contienePalabrasProhibidas(texto)) {
+        return res.json({ permitido: false, bloqueado: true, razon: "Palabra prohibida detectada" });
     }
 
-    return res.json({
-      permitido: !bloqueado,
-      bloqueado,
-      razon: bloqueado ? "Texto prohibido" : "Texto permitido",
-    });
-  } catch {
-    return res.json({
-      permitido: true,
-      bloqueado: false,
-      razon: "Error IA → permitido",
-    });
-  }
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    generationConfig: { temperature: 0 },
+                    contents: [{ parts: [{ text: `Analiza si este texto es sexual o violento. Responde SOLO JSON: {"bloqueado": boolean}. Texto: ${texto}` }] }],
+                }),
+            }
+        );
+
+        const data = await response.json();
+        const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const limpio = textoIA.replace(/```json/g, "").replace(/```/g, "").trim();
+        const json = JSON.parse(limpio);
+
+        return res.json({ permitido: !json.bloqueado, bloqueado: json.bloqueado, razon: json.bloqueado ? "Contenido inapropiado" : "OK" });
+    } catch {
+        return res.json({ permitido: false, bloqueado: true, razon: "Error en IA" });
+    }
 });
 
 // =============================
-// 🔥 VERIFICAR IMAGEN (PRO)
+// 🔥 VERIFICAR IMAGEN (OPTIMIZADO)
 // =============================
 app.post("/verificar-imagen", async (req, res) => {
-  const { imagen } = req.body;
+    const { imagen } = req.body;
 
-  if (!imagen) {
-    return res.json({
-      permitido: false,
-      bloqueado: true,
-      razon: "No llegó imagen",
-    });
-  }
-
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          safetySettings: [
-            {
-              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-          ],
-          generationConfig: { temperature: 0 },
-          contents: [
-            {
-              parts: [
-                {
-                  text: `
-Analiza esta imagen.
-
-Bloquea SOLO si hay:
-- desnudos reales
-- partes íntimas visibles
-- sexo explícito
-- pornografía
-
-NO bloquear:
-- selfies
-- fotos normales
-- turismo
-- ropa normal
-
-Responde SOLO JSON:
-{"bloqueado": true, "razon": "explicación"}
-o
-{"bloqueado": false, "razon": "foto normal"}
-`,
-                },
-                {
-                  inlineData: {
-                    mimeType: "image/jpeg",
-                    data: imagen,
-                  },
-                },
-              ],
-            },
-          ],
-        }),
-      }
-    );
-
-    const data = await response.json();
-
-    console.log("IA imagen:", JSON.stringify(data));
-
-    // 🔥 Bloqueo directo por Google
-    if (data.promptFeedback?.blockReason === "SAFETY") {
-      return res.json({
-        permitido: false,
-        bloqueado: true,
-        nsfw: true,
-        razon: "Bloqueado por seguridad Google",
-      });
-    }
-
-    const textoIA =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-    if (!textoIA) {
-      return res.json({
-        permitido: true,
-        bloqueado: false,
-        razon: "IA no respondió → permitido",
-      });
-    }
-
-    let bloqueado = false;
-    let razon = "Imagen permitida";
+    if (!imagen) return res.json({ permitido: false, bloqueado: true, razon: "Falta imagen" });
 
     try {
-      const limpio = textoIA
-        .replace(/```json/g, "")
-        .replace(/```/g, "")
-        .trim();
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    // 🔥 Configuración para no ser tan estricto
+                    safetySettings: [
+                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" }
+                    ],
+                    generationConfig: { temperature: 0 },
+                    contents: [{
+                        parts: [
+                            { text: `Analiza esta imagen. ¿Contiene desnudez explícita o actos sexuales? Responde SOLO JSON: {"bloqueado": boolean, "razon": string}. Si es una foto normal, bloqueado: false.` },
+                            { inlineData: { mimeType: "image/jpeg", data: imagen } },
+                        ],
+                    }],
+                }),
+            }
+        );
 
-      const json = JSON.parse(limpio);
+        const data = await response.json();
+        
+        // Verificar si Google bloqueó la petición antes de parsear
+        if (data.promptFeedback?.blockReason === "SAFETY") {
+            return res.json({ permitido: false, bloqueado: true, razon: "Imagen bloqueada por filtros de seguridad" });
+        }
 
-      bloqueado = json.bloqueado === true;
-      razon = json.razon || razon;
-    } catch {
-      bloqueado = false;
-      razon = "Respuesta IA inválida → permitido";
+        const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const limpio = textoIA.replace(/```json/g, "").replace(/```/g, "").trim();
+        const json = JSON.parse(limpio);
+
+        return res.json({
+            permitido: !json.bloqueado,
+            bloqueado: json.bloqueado,
+            razon: json.razon || "Evaluación completada"
+        });
+
+    } catch (e) {
+        return res.json({ permitido: false, bloqueado: true, razon: "Error al procesar imagen" });
     }
-
-    return res.json({
-      permitido: !bloqueado,
-      bloqueado,
-      nsfw: bloqueado,
-      razon,
-    });
-  } catch (error) {
-    console.log("ERROR IA:", error);
-
-    return res.json({
-      permitido: true,
-      bloqueado: false,
-      razon: "Error IA → permitido",
-    });
-  }
 });
 
-// =============================
-// TEST
-// =============================
-app.get("/", (req, res) => {
-  res.send("Backend funcionando 🚀");
-});
+app.get("/", (req, res) => res.send("Backend activo 🚀"));
 
-// =============================
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`));
