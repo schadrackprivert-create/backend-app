@@ -69,7 +69,7 @@ app.post("/verificar", async (req, res) => {
 });
 
 // =============================
-// 🔥 VERIFICAR IMAGEN (OPTIMIZADO)
+// 🔥 VERIFICAR IMAGEN (OPTIMIZADO Y ESTRICTO)
 // =============================
 app.post("/verificar-imagen", async (req, res) => {
     const { imagen } = req.body;
@@ -83,9 +83,9 @@ app.post("/verificar-imagen", async (req, res) => {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    // 🔥 Configuración para no ser tan estricto
+                    // 🔥 Nivel estricto para bloquear contenido sexual
                     safetySettings: [
-                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" }
+                        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
                     ],
                     generationConfig: { temperature: 0 },
                     contents: [{
@@ -99,13 +99,17 @@ app.post("/verificar-imagen", async (req, res) => {
         );
 
         const data = await response.json();
-        
-        // Verificar si Google bloqueó la petición antes de parsear
+
+        // Verificar si Google bloqueó la petición antes de intentar parsear
         if (data.promptFeedback?.blockReason === "SAFETY") {
             return res.json({ permitido: false, bloqueado: true, razon: "Imagen bloqueada por filtros de seguridad" });
         }
 
         const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!textoIA) {
+            return res.json({ permitido: false, bloqueado: true, razon: "La IA no pudo evaluar la imagen o fue filtrada" });
+        }
+
         const limpio = textoIA.replace(/```json/g, "").replace(/```/g, "").trim();
         const json = JSON.parse(limpio);
 
