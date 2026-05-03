@@ -8,6 +8,7 @@ const app = express();
 app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.GEMINI_API_KEY;
 
 // Seguridad
 app.use(helmet());
@@ -21,21 +22,23 @@ app.use(
   })
 );
 
-// TEST
+// Limpiar base64
+function limpiarBase64(imagen = "") {
+  let limpio = String(imagen || "").trim();
+
+  if (limpio.includes(",")) {
+    limpio = limpio.split(",").pop();
+  }
+
+  return limpio.replace(/^data:image\/\w+;base64,/, "");
+}
+
+// 🔥 TEST
 app.get("/", (req, res) => {
   res.send("Servidor funcionando 🚀");
 });
 
-// TEXTO
-app.post("/verificar", async (req, res) => {
-  try {
-    return res.json({ permitido: true });
-  } catch {
-    res.json({ permitido: false });
-  }
-});
-
-// IMAGEN
+// 🔥 VALIDAR TEXTO
 app.post("/verificar-imagen", async (req, res) => {
   try {
     const { imagen } = req.body;
@@ -44,12 +47,13 @@ app.post("/verificar-imagen", async (req, res) => {
       return res.json({ permitido: false });
     }
 
-    return res.json({ permitido: true });
-  } catch {
+    // 🔥 Aquí puedes conectar IA después
+    return res.json({
+      permitido: true,
+    });
+
+  } catch (error) {
+    console.log(error);
     res.json({ permitido: false });
   }
-});
-
-app.listen(PORT, () => {
-  console.log("Servidor corriendo en puerto " + PORT);
 });
