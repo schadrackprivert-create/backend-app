@@ -292,9 +292,9 @@ Tipo de imagen: ${tipo}
       const err = await response.text();
       console.error("Gemini HTTP error (imagen):", response.status, err);
       return res.json({
-        permitido: true,           // âœ… FIX: error HTTP â†’ permitir
-        bloqueado: false,
-        razon: "Error tÃ©cnico Gemini, se permite por defecto",
+        permitido: false,          // âœ… FIX: error HTTP en imagen â†’ bloquear
+        bloqueado: true,
+        razon: `Imagen rechazada por Gemini (error ${response.status})`,
       });
     }
 
@@ -351,9 +351,9 @@ Tipo de imagen: ${tipo}
   } catch (error) {
     console.error("ERROR IMAGEN:", error.message);
     return res.json({
-      permitido: true,             // âœ… FIX: excepciÃ³n â†’ permitir
-      bloqueado: false,
-      razon: "Error tÃ©cnico, se permite por defecto",
+      permitido: false,            // âœ… FIX: excepciÃ³n en imagen â†’ bloquear por seguridad
+      bloqueado: true,
+      razon: "Error tÃ©cnico, imagen bloqueada por seguridad",
     });
   }
 });
