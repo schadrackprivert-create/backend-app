@@ -12,10 +12,6 @@ app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log("Servidor corriendo en puerto " + PORT);
-});
-
 app.use(helmet());
 app.use(express.json({ limit: "15mb" }));
 app.use(cors({ origin: process.env.ALLOWED_ORIGIN || "*" }));
@@ -83,14 +79,16 @@ app.post("/verificar-imagen", async (req, res) => {
 
     const predicciones = await modelo.classify(tensor);
 
-    const porn = predicciones.find((p) => p.className === "Porn")?.probability || 0;
-    const hentai = predicciones.find((p) => p.className === "Hentai")?.probability || 0;
-    const sexy = predicciones.find((p) => p.className === "Sexy")?.probability || 0;
+    const porn =
+      predicciones.find((p) => p.className === "Porn")?.probability || 0;
 
-    const bloqueado =
-      porn >= 0.65 ||
-      hentai >= 0.65 ||
-      sexy >= 0.85;
+    const hentai =
+      predicciones.find((p) => p.className === "Hentai")?.probability || 0;
+
+    const sexy =
+      predicciones.find((p) => p.className === "Sexy")?.probability || 0;
+
+    const bloqueado = porn >= 0.65 || hentai >= 0.65 || sexy >= 0.85;
 
     return res.json({
       permitido: !bloqueado,
@@ -116,7 +114,45 @@ app.post("/verificar-imagen", async (req, res) => {
   }
 });
 
+app.post("/verificar", async (req, res) => {
+  try {
+    const { texto = "" } = req.body;
+    const contenido = String(texto || "").toLowerCase();
+
+    const palabrasBloqueadas = [
+      "porno",
+      "porn",
+      "xxx",
+      "nudes",
+      "desnudo",
+      "desnuda",
+      "pene",
+      "vagina",
+      "sexo explícito",
+    ];
+
+    const bloqueado = palabrasBloqueadas.some((p) => contenido.includes(p));
+
+    return res.json({
+      permitido: !bloqueado,
+      bloqueado,
+      razon: bloqueado ? "Texto bloqueado" : "Texto permitido",
+    });
+  } catch (error) {
+    return res.json({
+      permitido: false,
+      bloqueado: true,
+      razon: "Error verificando texto",
+    });
+  }
+});
+
 app.listen(PORT, async () => {
-  await cargarModelo();
-  console.log("Servidor corriendo en puerto", PORT);
+  try {
+    await cargarModelo();
+  } catch (error) {
+    console.error("No se pudo cargar modelo NSFW:", error.message);
+  }
+
+  console.log("Servidor corriendo en puerto " + PORT);
 });
