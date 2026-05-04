@@ -21,7 +21,7 @@ app.use(
   })
 );
 
-// ✅ CORREGIDO: detecta el tipo MIME real de la imagen
+// âœ… Detecta el tipo MIME real de la imagen
 function detectarMime(imagen = "") {
   const str = String(imagen).trim();
   const match = str.match(/^data:(image\/\w+);base64,/);
@@ -36,13 +36,14 @@ function detectarMime(imagen = "") {
   return "image/jpeg";
 }
 
-// ✅ CORREGIDO: lógica simplificada sin duplicación
+// âœ… Limpia el base64 quitando prefijo data URI
 function limpiarBase64(imagen = "") {
   const str = String(imagen || "").trim();
   const idx = str.indexOf("base64,");
   return (idx !== -1 ? str.slice(idx + 7) : str).replace(/\s/g, "");
 }
 
+// âœ… Limpia backticks de markdown que Gemini a veces agrega
 function limpiarJson(texto = "") {
   return String(texto)
     .replace(/```json/gi, "")
@@ -51,19 +52,19 @@ function limpiarJson(texto = "") {
 }
 
 app.get("/", (req, res) => {
-  res.send("Backend funcionando 🔥");
+  res.send("Backend funcionando ðŸ”¥");
 });
 
-// ✅ IA REAL PARA TEXTO
+// âœ… VERIFICAR TEXTO
 app.post("/verificar", async (req, res) => {
   try {
     const { texto = "" } = req.body;
 
     if (!API_KEY) {
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: "Falta GEMINI_API_KEY en Render",
+        permitido: true,           // âœ… FIX: si no hay API key, permitir
+        bloqueado: false,
+        razon: "Sin API key, se permite por defecto",
       });
     }
 
@@ -73,7 +74,7 @@ app.post("/verificar", async (req, res) => {
       return res.json({
         permitido: true,
         bloqueado: false,
-        razon: "Texto vacío permitido",
+        razon: "Texto vacÃ­o permitido",
       });
     }
 
@@ -85,35 +86,39 @@ app.post("/verificar", async (req, res) => {
         body: JSON.stringify({
           generationConfig: { temperature: 0, maxOutputTokens: 100 },
           safetySettings: [
-            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-            { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-            { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" }, // âœ… FIX: menos restrictivo
+            { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_ONLY_HIGH" },
+            { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_ONLY_HIGH" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
           ],
           contents: [
             {
               parts: [
                 {
                   text: `
-Eres un moderador de una app social turística.
+Eres un moderador MUY permisivo de una app social turÃ­stica.
+Tu trabajo es SOLO bloquear contenido CLARAMENTE inapropiado.
+En caso de DUDA, siempre responde bloqueado: false.
 
-Responde SOLO JSON válido:
-{"bloqueado": true, "razon": "motivo"}
-o
+Responde SOLO este JSON sin texto extra, sin markdown, sin explicaciÃ³n:
 {"bloqueado": false, "razon": "permitido"}
+o solo si hay algo CLARAMENTE explÃ­cito:
+{"bloqueado": true, "razon": "motivo especÃ­fico"}
 
-Bloquea si el texto contiene:
-- contenido sexual explícito
-- pornografía
-- venta sexual
-- acoso
-- odio
-- amenazas
-- violencia extrema
-- drogas o armas
-- insultos graves
+BLOQUEA SOLO si el texto contiene de forma MUY CLARA:
+- pornografÃ­a o contenido sexual explÃ­cito
+- venta sexual o prostituciÃ³n
+- amenazas directas de violencia
+- odio racial o discriminaciÃ³n extrema
+- venta de drogas ilegales o armas
 
-No bloquees saludos, turismo, viajes, fotos normales o comentarios normales.
+NO BLOQUEES (esto es normal y debe pasar siempre):
+- saludos y comentarios normales
+- descripciones de viajes y turismo
+- opiniones sobre lugares
+- comentarios sobre comida o restaurantes
+- fotos y descripciones de paisajes
+- cualquier texto cotidiano o turÃ­stico
                   `,
                 },
                 { text: contenido },
@@ -124,20 +129,20 @@ No bloquees saludos, turismo, viajes, fotos normales o comentarios normales.
       }
     );
 
-    // ✅ CORREGIDO: verificar status HTTP antes de parsear
     if (!response.ok) {
       const err = await response.text();
       console.error("Gemini HTTP error (texto):", response.status, err);
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: `Error Gemini ${response.status}`,
+        permitido: true,           // âœ… FIX: error tÃ©cnico â†’ permitir
+        bloqueado: false,
+        razon: "Error tÃ©cnico Gemini, se permite por defecto",
       });
     }
 
     const data = await response.json();
 
     if (data?.promptFeedback?.blockReason) {
+      console.warn("Texto bloqueado por Google Safety:", data.promptFeedback.blockReason);
       return res.json({
         permitido: false,
         bloqueado: true,
@@ -146,12 +151,13 @@ No bloquees saludos, turismo, viajes, fotos normales o comentarios normales.
     }
 
     const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    console.log("Respuesta IA texto:", textoIA); // âœ… Log para depurar
 
     if (!textoIA) {
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: "IA no respondió",
+        permitido: true,           // âœ… FIX: sin respuesta â†’ permitir
+        bloqueado: false,
+        razon: "IA sin respuesta, se permite por defecto",
       });
     }
 
@@ -159,40 +165,40 @@ No bloquees saludos, turismo, viajes, fotos normales o comentarios normales.
     try {
       json = JSON.parse(limpiarJson(textoIA));
     } catch {
+      console.warn("JSON invÃ¡lido de IA texto:", textoIA);
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: "Respuesta IA inválida",
+        permitido: true,           // âœ… FIX: JSON invÃ¡lido â†’ permitir
+        bloqueado: false,
+        razon: "Respuesta IA no parseable, se permite por defecto",
       });
     }
 
     return res.json({
       permitido: json.bloqueado === false,
       bloqueado: json.bloqueado !== false,
-      razon: json.razon || "Evaluación completada",
+      razon: json.razon || "EvaluaciÃ³n completada",
     });
 
   } catch (error) {
-    // ✅ CORREGIDO: solo loggear el mensaje, no el objeto completo
     console.error("ERROR TEXTO:", error.message);
     return res.json({
-      permitido: false,
-      bloqueado: true,
-      razon: "Error técnico IA texto",
+      permitido: true,             // âœ… FIX: excepciÃ³n â†’ permitir
+      bloqueado: false,
+      razon: "Error tÃ©cnico, se permite por defecto",
     });
   }
 });
 
-// ✅ IA REAL PARA IMAGEN
+// âœ… VERIFICAR IMAGEN
 app.post("/verificar-imagen", async (req, res) => {
   try {
     const { imagen, tipo = "post" } = req.body;
 
     if (!API_KEY) {
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: "Falta GEMINI_API_KEY en Render",
+        permitido: true,           // âœ… FIX: sin API key â†’ permitir
+        bloqueado: false,
+        razon: "Sin API key, se permite por defecto",
       });
     }
 
@@ -200,22 +206,23 @@ app.post("/verificar-imagen", async (req, res) => {
       return res.json({
         permitido: false,
         bloqueado: true,
-        razon: "No llegó imagen",
+        razon: "No llegÃ³ imagen",
       });
     }
 
     const base64 = limpiarBase64(imagen);
+    console.log("Base64 length:", base64.length); // âœ… Log para depurar
 
     if (!base64 || base64.length < 1000) {
       return res.json({
         permitido: false,
         bloqueado: true,
-        razon: "Imagen inválida o muy pequeña",
+        razon: "Imagen invÃ¡lida o muy pequeÃ±a",
       });
     }
 
-    // ✅ CORREGIDO: detectar el tipo MIME real
     const mimeType = detectarMime(imagen);
+    console.log("MIME detectado:", mimeType); // âœ… Log para depurar
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
@@ -225,49 +232,48 @@ app.post("/verificar-imagen", async (req, res) => {
         body: JSON.stringify({
           generationConfig: { temperature: 0, maxOutputTokens: 120 },
           safetySettings: [
-            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-            { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-            { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" }, // âœ… FIX: menos restrictivo
+            { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_ONLY_HIGH" },
+            { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_ONLY_HIGH" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" },
           ],
           contents: [
             {
               parts: [
                 {
                   text: `
-Analiza esta imagen para una app social turística.
+Eres un moderador MUY permisivo de una app de turismo familiar.
+Tu trabajo es SOLO bloquear contenido CLARAMENTE inapropiado.
+En caso de DUDA, siempre responde bloqueado: false.
 
-Responde SOLO JSON válido:
-{"bloqueado": true, "razon": "motivo"}
-o
+Responde SOLO este JSON sin texto extra, sin markdown, sin explicaciÃ³n:
 {"bloqueado": false, "razon": "permitido"}
+o solo si hay algo CLARAMENTE explÃ­cito:
+{"bloqueado": true, "razon": "motivo especÃ­fico"}
 
-Bloquea si la imagen contiene:
-- desnudez explícita
-- pornografía
-- acto sexual
-- partes íntimas visibles
-- violencia gráfica
-- sangre extrema
-- armas usadas para amenazar
-- drogas ilegales
-- odio o símbolos extremistas
+BLOQUEA SOLO si ves CLARAMENTE:
+- pornografÃ­a o actos sexuales explÃ­citos
+- genitales expuestos sin contexto mÃ©dico
+- violencia gore con sangre extrema
+- sÃ­mbolos de odio extremista muy claros
 
-No bloquees:
-- selfies normales
-- paisajes
-- comida
-- playas sin desnudez explícita
-- ropa normal
-- fotos familiares
-- fotos turísticas normales
+NO BLOQUEES bajo ninguna circunstancia (esto es NORMAL y debe pasar):
+- personas vestidas normalmente
+- selfies y fotos personales
+- paisajes, playas, montaÃ±as, ciudades
+- comida y restaurantes
+- hoteles, calles, edificios
+- fotos familiares o grupales
+- cualquier foto turÃ­stica o cotidiana
+- personas en traje de baÃ±o en playa
+- ropa deportiva o casual
 
 Tipo de imagen: ${tipo}
                   `,
                 },
                 {
                   inlineData: {
-                    mimeType: mimeType,   // ✅ CORREGIDO: tipo real, no fijo
+                    mimeType: mimeType,
                     data: base64,
                   },
                 },
@@ -278,20 +284,20 @@ Tipo de imagen: ${tipo}
       }
     );
 
-    // ✅ CORREGIDO: verificar status HTTP antes de parsear
     if (!response.ok) {
       const err = await response.text();
       console.error("Gemini HTTP error (imagen):", response.status, err);
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: `Error Gemini ${response.status}`,
+        permitido: true,           // âœ… FIX: error HTTP â†’ permitir
+        bloqueado: false,
+        razon: "Error tÃ©cnico Gemini, se permite por defecto",
       });
     }
 
     const data = await response.json();
 
     if (data?.promptFeedback?.blockReason) {
+      console.warn("Imagen bloqueada por Google Safety:", data.promptFeedback.blockReason);
       return res.json({
         permitido: false,
         bloqueado: true,
@@ -301,6 +307,8 @@ Tipo de imagen: ${tipo}
 
     const finishReason = data?.candidates?.[0]?.finishReason || "";
     const textoIA = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    console.log("Respuesta IA imagen:", textoIA); // âœ… Log para depurar
+    console.log("finishReason:", finishReason);   // âœ… Log para depurar
 
     if (finishReason === "SAFETY") {
       return res.json({
@@ -312,9 +320,9 @@ Tipo de imagen: ${tipo}
 
     if (!textoIA) {
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: "IA no respondió",
+        permitido: true,           // âœ… FIX: sin respuesta â†’ permitir
+        bloqueado: false,
+        razon: "IA sin respuesta, se permite por defecto",
       });
     }
 
@@ -322,26 +330,26 @@ Tipo de imagen: ${tipo}
     try {
       json = JSON.parse(limpiarJson(textoIA));
     } catch {
+      console.warn("JSON invÃ¡lido de IA imagen:", textoIA);
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: "Respuesta IA inválida",
+        permitido: true,           // âœ… FIX: JSON invÃ¡lido â†’ permitir
+        bloqueado: false,
+        razon: "Respuesta IA no parseable, se permite por defecto",
       });
     }
 
     return res.json({
       permitido: json.bloqueado === false,
       bloqueado: json.bloqueado !== false,
-      razon: json.razon || "Evaluación completada",
+      razon: json.razon || "EvaluaciÃ³n completada",
     });
 
   } catch (error) {
-    // ✅ CORREGIDO: solo loggear el mensaje, no el objeto completo
     console.error("ERROR IMAGEN:", error.message);
     return res.json({
-      permitido: false,
-      bloqueado: true,
-      razon: "Error técnico IA imagen",
+      permitido: true,             // âœ… FIX: excepciÃ³n â†’ permitir
+      bloqueado: false,
+      razon: "Error tÃ©cnico, se permite por defecto",
     });
   }
 });
