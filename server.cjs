@@ -3,7 +3,8 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const nsfw = require("nsfwjs");
-const tf = require("@tensorflow/tfjs-node"); // ⚠️ IMPORTANTE CAMBIO
+const tf = require("@tensorflow/tfjs");
+const { Image } = require("canvas");
 require("dotenv").config();
 
 const app = express();
@@ -11,7 +12,6 @@ app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
 
-// Middlewares
 app.use(helmet());
 app.use(express.json({ limit: "15mb" }));
 app.use(cors({ origin: process.env.ALLOWED_ORIGIN || "*" }));
@@ -23,7 +23,6 @@ app.use(
   })
 );
 
-// Modelo
 let modeloNSFW = null;
 
 async function cargarModelo() {
@@ -34,7 +33,6 @@ async function cargarModelo() {
   return modeloNSFW;
 }
 
-// Utils
 function limpiarBase64(imagen = "") {
   const str = String(imagen || "").trim();
   const idx = str.indexOf("base64,");
@@ -43,15 +41,15 @@ function limpiarBase64(imagen = "") {
 
 function base64ATensor(base64) {
   const buffer = Buffer.from(base64, "base64");
-  return tf.node.decodeImage(buffer, 3); // ⚠️ más estable en backend
+  const img = new Image();
+  img.src = buffer;
+  return tf.browser.fromPixels(img);
 }
 
-// ROUTES
 app.get("/", (req, res) => {
   res.send("Backend funcionando 🔥");
 });
 
-// IMAGEN NSFW
 app.post("/verificar-imagen", async (req, res) => {
   let tensor = null;
 
@@ -81,14 +79,9 @@ app.post("/verificar-imagen", async (req, res) => {
 
     const predicciones = await modelo.classify(tensor);
 
-    const porn =
-      predicciones.find((p) => p.className === "Porn")?.probability || 0;
-
-    const hentai =
-      predicciones.find((p) => p.className === "Hentai")?.probability || 0;
-
-    const sexy =
-      predicciones.find((p) => p.className === "Sexy")?.probability || 0;
+    const porn = predicciones.find((p) => p.className === "Porn")?.probability || 0;
+    const hentai = predicciones.find((p) => p.className === "Hentai")?.probability || 0;
+    const sexy = predicciones.find((p) => p.className === "Sexy")?.probability || 0;
 
     const bloqueado = porn >= 0.65 || hentai >= 0.65 || sexy >= 0.85;
 
@@ -103,7 +96,7 @@ app.post("/verificar-imagen", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("ERROR NSFW:", error);
+    console.error("ERROR NSFW:", error.message);
 
     return res.json({
       permitido: false,
@@ -115,11 +108,10 @@ app.post("/verificar-imagen", async (req, res) => {
   }
 });
 
-// TEXTO
 app.post("/verificar", async (req, res) => {
   try {
     const { texto = "" } = req.body;
-    const contenido = String(texto).toLowerCase();
+    const contenido = String(texto || "").toLowerCase();
 
     const palabrasBloqueadas = [
       "porno",
@@ -130,12 +122,11 @@ app.post("/verificar", async (req, res) => {
       "desnuda",
       "pene",
       "vagina",
+      "sexo explícito",
       "sexo",
     ];
 
-    const bloqueado = palabrasBloqueadas.some((p) =>
-      contenido.includes(p)
-    );
+    const bloqueado = palabrasBloqueadas.some((p) => contenido.includes(p));
 
     return res.json({
       permitido: !bloqueado,
@@ -151,12 +142,11 @@ app.post("/verificar", async (req, res) => {
   }
 });
 
-// START SERVER
 app.listen(PORT, async () => {
   try {
     await cargarModelo();
   } catch (error) {
-    console.error("No se pudo cargar modelo:", error.message);
+    console.error("No se pudo cargar modelo NSFW:", error.message);
   }
 
   console.log("Servidor corriendo en puerto " + PORT);
