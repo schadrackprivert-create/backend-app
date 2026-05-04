@@ -3,7 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const nsfw = require("nsfwjs");
-const tf = require("@tensorflow/tfjs-node");
+const tf = require("@tensorflow/tfjs");
 const { Image } = require("canvas");
 require("dotenv").config();
 
