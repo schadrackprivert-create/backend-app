@@ -3,8 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const nsfw = require("nsfwjs");
-const tf = require("@tensorflow/tfjs");
-const { Image } = require("canvas");
+const tf = require("@tensorflow/tfjs-node"); // ⚠️ IMPORTANTE CAMBIO
 require("dotenv").config();
 
 const app = express();
@@ -12,6 +11,7 @@ app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
 
+// Middlewares
 app.use(helmet());
 app.use(express.json({ limit: "15mb" }));
 app.use(cors({ origin: process.env.ALLOWED_ORIGIN || "*" }));
@@ -23,16 +23,18 @@ app.use(
   })
 );
 
+// Modelo
 let modeloNSFW = null;
 
 async function cargarModelo() {
   if (!modeloNSFW) {
     modeloNSFW = await nsfw.load();
-    console.log("Modelo NSFW local cargado ✅");
+    console.log("Modelo NSFW cargado ✅");
   }
   return modeloNSFW;
 }
 
+// Utils
 function limpiarBase64(imagen = "") {
   const str = String(imagen || "").trim();
   const idx = str.indexOf("base64,");
@@ -41,15 +43,15 @@ function limpiarBase64(imagen = "") {
 
 function base64ATensor(base64) {
   const buffer = Buffer.from(base64, "base64");
-  const img = new Image();
-  img.src = buffer;
-  return tf.browser.fromPixels(img);
+  return tf.node.decodeImage(buffer, 3); // ⚠️ más estable en backend
 }
 
+// ROUTES
 app.get("/", (req, res) => {
   res.send("Backend funcionando 🔥");
 });
 
+// IMAGEN NSFW
 app.post("/verificar-imagen", async (req, res) => {
   let tensor = null;
 
@@ -99,25 +101,25 @@ app.post("/verificar-imagen", async (req, res) => {
         hentai: Number(hentai.toFixed(3)),
         sexy: Number(sexy.toFixed(3)),
       },
-      predicciones,
     });
   } catch (error) {
-    console.error("ERROR NSFW LOCAL:", error.message);
+    console.error("ERROR NSFW:", error);
 
     return res.json({
       permitido: false,
       bloqueado: true,
-      razon: "Error analizando imagen local",
+      razon: "Error analizando imagen",
     });
   } finally {
     if (tensor) tensor.dispose();
   }
 });
 
+// TEXTO
 app.post("/verificar", async (req, res) => {
   try {
     const { texto = "" } = req.body;
-    const contenido = String(texto || "").toLowerCase();
+    const contenido = String(texto).toLowerCase();
 
     const palabrasBloqueadas = [
       "porno",
@@ -128,10 +130,12 @@ app.post("/verificar", async (req, res) => {
       "desnuda",
       "pene",
       "vagina",
-      "sexo explícito",
+      "sexo",
     ];
 
-    const bloqueado = palabrasBloqueadas.some((p) => contenido.includes(p));
+    const bloqueado = palabrasBloqueadas.some((p) =>
+      contenido.includes(p)
+    );
 
     return res.json({
       permitido: !bloqueado,
@@ -147,11 +151,12 @@ app.post("/verificar", async (req, res) => {
   }
 });
 
+// START SERVER
 app.listen(PORT, async () => {
   try {
     await cargarModelo();
   } catch (error) {
-    console.error("No se pudo cargar modelo NSFW:", error.message);
+    console.error("No se pudo cargar modelo:", error.message);
   }
 
   console.log("Servidor corriendo en puerto " + PORT);
