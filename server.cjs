@@ -12,6 +12,10 @@ app.set("trust proxy", 1);
 
 const PORT = process.env.PORT || 3000;
 
+app.listen(PORT, () => {
+  console.log("Servidor corriendo en puerto " + PORT);
+});
+
 app.use(helmet());
 app.use(express.json({ limit: "15mb" }));
 app.use(cors({ origin: process.env.ALLOWED_ORIGIN || "*" }));
