@@ -12,7 +12,7 @@ const API_KEY = process.env.GEMINI_API_KEY;
 
 app.use(helmet());
 app.use(express.json({ limit: "15mb" }));
-app.use(cors({ origin: "*" }));
+app.use(cors({ origin: process.env.ALLOWED_ORIGIN || "*" }));
 
 app.use(
   rateLimit({
@@ -21,16 +21,26 @@ app.use(
   })
 );
 
+// ✅ CORREGIDO: detecta el tipo MIME real de la imagen
+function detectarMime(imagen = "") {
+  const str = String(imagen).trim();
+  const match = str.match(/^data:(image\/\w+);base64,/);
+  if (match) return match[1];
+  const raw = str.indexOf("base64,") !== -1
+    ? str.slice(str.indexOf("base64,") + 7)
+    : str;
+  if (raw.startsWith("/9j/"))   return "image/jpeg";
+  if (raw.startsWith("iVBOR")) return "image/png";
+  if (raw.startsWith("R0lGO")) return "image/gif";
+  if (raw.startsWith("UklGR")) return "image/webp";
+  return "image/jpeg";
+}
+
+// ✅ CORREGIDO: lógica simplificada sin duplicación
 function limpiarBase64(imagen = "") {
-  let limpio = String(imagen || "").trim();
-
-  if (limpio.includes(",")) {
-    limpio = limpio.split(",").pop();
-  }
-
-  return limpio
-    .replace(/^data:image\/\w+;base64,/i, "")
-    .replace(/\s/g, "");
+  const str = String(imagen || "").trim();
+  const idx = str.indexOf("base64,");
+  return (idx !== -1 ? str.slice(idx + 7) : str).replace(/\s/g, "");
 }
 
 function limpiarJson(texto = "") {
@@ -71,31 +81,14 @@ app.post("/verificar", async (req, res) => {
       `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 100,
-          },
+          generationConfig: { temperature: 0, maxOutputTokens: 100 },
           safetySettings: [
-            {
-              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-              category: "HARM_CATEGORY_HATE_SPEECH",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-              category: "HARM_CATEGORY_HARASSMENT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
           ],
           contents: [
             {
@@ -123,15 +116,24 @@ Bloquea si el texto contiene:
 No bloquees saludos, turismo, viajes, fotos normales o comentarios normales.
                   `,
                 },
-                {
-                  text: contenido,
-                },
+                { text: contenido },
               ],
             },
           ],
         }),
       }
     );
+
+    // ✅ CORREGIDO: verificar status HTTP antes de parsear
+    if (!response.ok) {
+      const err = await response.text();
+      console.error("Gemini HTTP error (texto):", response.status, err);
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: `Error Gemini ${response.status}`,
+      });
+    }
 
     const data = await response.json();
 
@@ -169,8 +171,10 @@ No bloquees saludos, turismo, viajes, fotos normales o comentarios normales.
       bloqueado: json.bloqueado !== false,
       razon: json.razon || "Evaluación completada",
     });
+
   } catch (error) {
-    console.log("ERROR TEXTO:", error);
+    // ✅ CORREGIDO: solo loggear el mensaje, no el objeto completo
+    console.error("ERROR TEXTO:", error.message);
     return res.json({
       permitido: false,
       bloqueado: true,
@@ -210,35 +214,21 @@ app.post("/verificar-imagen", async (req, res) => {
       });
     }
 
+    // ✅ CORREGIDO: detectar el tipo MIME real
+    const mimeType = detectarMime(imagen);
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          generationConfig: {
-            temperature: 0,
-            maxOutputTokens: 120,
-          },
+          generationConfig: { temperature: 0, maxOutputTokens: 120 },
           safetySettings: [
-            {
-              category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-              category: "HARM_CATEGORY_HATE_SPEECH",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-              category: "HARM_CATEGORY_HARASSMENT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
-            {
-              category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-              threshold: "BLOCK_MEDIUM_AND_ABOVE",
-            },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH",       threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_HARASSMENT",        threshold: "BLOCK_MEDIUM_AND_ABOVE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
           ],
           contents: [
             {
@@ -277,7 +267,7 @@ Tipo de imagen: ${tipo}
                 },
                 {
                   inlineData: {
-                    mimeType: "image/jpeg",
+                    mimeType: mimeType,   // ✅ CORREGIDO: tipo real, no fijo
                     data: base64,
                   },
                 },
@@ -287,6 +277,17 @@ Tipo de imagen: ${tipo}
         }),
       }
     );
+
+    // ✅ CORREGIDO: verificar status HTTP antes de parsear
+    if (!response.ok) {
+      const err = await response.text();
+      console.error("Gemini HTTP error (imagen):", response.status, err);
+      return res.json({
+        permitido: false,
+        bloqueado: true,
+        razon: `Error Gemini ${response.status}`,
+      });
+    }
 
     const data = await response.json();
 
@@ -333,8 +334,10 @@ Tipo de imagen: ${tipo}
       bloqueado: json.bloqueado !== false,
       razon: json.razon || "Evaluación completada",
     });
+
   } catch (error) {
-    console.log("ERROR IMAGEN:", error);
+    // ✅ CORREGIDO: solo loggear el mensaje, no el objeto completo
+    console.error("ERROR IMAGEN:", error.message);
     return res.json({
       permitido: false,
       bloqueado: true,
