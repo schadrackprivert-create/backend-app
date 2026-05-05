@@ -132,15 +132,15 @@ app.post("/verificar-imagen", async (req, res) => {
       labels,
     });
   } catch (error) {
-    console.log("ERROR AWS:", error);
+  console.log("ERROR AWS:", error);
 
-    return res.json({
-      permitido: true,
-      bloqueado: false,
-      razon: "Error AWS, permitido temporalmente",
-      error: error.message,
-    });
-  }
+  return res.status(500).json({
+    permitido: false,
+    bloqueado: true,
+    razon: "No se pudo verificar la imagen con AWS. Intenta nuevamente.",
+    error: error.message,
+  });
+}
 });
 
 app.listen(PORT, () => {
