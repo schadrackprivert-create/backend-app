@@ -26,6 +26,7 @@ app.use(
   })
 );
 
+// 🔥 AWS
 const rekognition = new RekognitionClient({
   region: process.env.AWS_REGION || "us-east-1",
   credentials: {
@@ -34,10 +35,12 @@ const rekognition = new RekognitionClient({
   },
 });
 
+// 🔥 TEST
 app.get("/", (req, res) => {
   res.send("Backend funcionando 🔥 AWS real activo");
 });
 
+// 🔥 TEXTO
 app.post("/verificar", async (req, res) => {
   try {
     const { texto = "" } = req.body;
@@ -57,7 +60,9 @@ app.post("/verificar", async (req, res) => {
       "vagina",
     ];
 
-    const bloqueado = palabrasBloqueadas.some((p) => contenido.includes(p));
+    const bloqueado = palabrasBloqueadas.some((p) =>
+      contenido.includes(p)
+    );
 
     return res.json({
       permitido: !bloqueado,
@@ -73,6 +78,7 @@ app.post("/verificar", async (req, res) => {
   }
 });
 
+// 🔥 IMAGEN PRO (MEJORADO)
 app.post("/verificar-imagen", async (req, res) => {
   try {
     const { imagen } = req.body;
@@ -81,7 +87,7 @@ app.post("/verificar-imagen", async (req, res) => {
       return res.json({
         permitido: true,
         bloqueado: false,
-        razon: "Sin imagen, permitido",
+        razon: "Sin imagen",
       });
     }
 
@@ -92,57 +98,78 @@ app.post("/verificar-imagen", async (req, res) => {
     const buffer = Buffer.from(imagenLimpia, "base64");
 
     const command = new DetectModerationLabelsCommand({
-      Image: {
-        Bytes: buffer,
-      },
-      MinConfidence: 80,
+      Image: { Bytes: buffer },
+      MinConfidence: 70, // 👈 más flexible
     });
 
     const result = await rekognition.send(command);
     const labels = result.ModerationLabels || [];
 
-    const categoriasBloqueadasExactas = [
+    console.log(
+      "AWS labels:",
+      labels.map((l) => ({
+        name: l.Name,
+        confidence: l.Confidence,
+      }))
+    );
+
+    // 🔥 SOLO BLOQUEAR LO REALMENTE EXPLÍCITO
+    const categoriasFuertes = [
       "Explicit Nudity",
       "Graphic Male Nudity",
       "Graphic Female Nudity",
+      "Exposed Genitalia",
+      "Exposed Female Nipple",
       "Sexual Activity",
-      "Sexual Situations",
-      "Adult Toys",
     ];
 
-    const etiquetaBloqueada = labels.find((label) =>
-      categoriasBloqueadasExactas.includes(label.Name || "")
-    );
+    const THRESHOLD_BLOCK = 85;
 
-    if (etiquetaBloqueada) {
+    let bloqueado = false;
+    let etiquetaDetectada = null;
+
+    for (const label of labels) {
+      if (
+        categoriasFuertes.includes(label.Name) &&
+        label.Confidence >= THRESHOLD_BLOCK
+      ) {
+        bloqueado = true;
+        etiquetaDetectada = label;
+        break;
+      }
+    }
+
+    // 🚫 SI ES EXPLÍCITO → BLOQUEAR
+    if (bloqueado) {
       return res.json({
         permitido: false,
         bloqueado: true,
-        razon: "Imagen bloqueada por contenido sexual o desnudez 🚫",
-        etiqueta: etiquetaBloqueada.Name,
-        confianza: etiquetaBloqueada.Confidence,
-        labels,
+        razon: "Imagen bloqueada por contenido sexual 🚫",
+        etiqueta: etiquetaDetectada?.Name,
+        confianza: etiquetaDetectada?.Confidence,
       });
     }
 
+    // ⚠️ CONTENIDO NORMAL (PLAYA, BIKINI, GYM)
     return res.json({
       permitido: true,
       bloqueado: false,
       razon: "Imagen permitida ✅",
-      labels,
     });
-  } catch (error) {
-  console.log("ERROR AWS:", error);
 
-  return res.status(500).json({
-    permitido: false,
-    bloqueado: true,
-    razon: "No se pudo verificar la imagen con AWS. Intenta nuevamente.",
-    error: error.message,
-  });
-}
+  } catch (error) {
+    console.log("ERROR AWS:", error);
+
+    return res.status(500).json({
+      permitido: false,
+      bloqueado: true,
+      razon: "Error verificando imagen (bloqueado por seguridad)",
+      error: error.message,
+    });
+  }
 });
 
+// 🚀 SERVER
 app.listen(PORT, () => {
   console.log("Servidor corriendo en puerto " + PORT);
 });
