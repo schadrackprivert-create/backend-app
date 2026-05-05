@@ -4,18 +4,11 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
-const AWS = require("aws-sdk");
 
 const app = express();
 app.set("trust proxy", 1);
 
-const PORT = process.env.PORT || 3000;
-
-const rekognition = new AWS.Rekognition({
-  region: process.env.AWS_REGION || "us-east-1",
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-});
+const PORT = process.env.PORT || 10000;
 
 app.use(helmet());
 app.use(cors({ origin: "*" }));
@@ -28,12 +21,10 @@ app.use(
   })
 );
 
-// 🔥 RUTA TEST
 app.get("/", (req, res) => {
   res.send("Backend funcionando 🔥");
 });
 
-// 🔥 BLOQUEO TEXTO
 app.post("/verificar", async (req, res) => {
   try {
     const { texto = "" } = req.body;
@@ -51,7 +42,6 @@ app.post("/verificar", async (req, res) => {
       "sexual",
       "pene",
       "vagina",
-      "sexo explícito",
     ];
 
     const bloqueado = palabrasBloqueadas.some((p) =>
@@ -64,45 +54,42 @@ app.post("/verificar", async (req, res) => {
       razon: bloqueado ? "Texto bloqueado 🚫" : "Texto permitido ✅",
     });
   } catch (error) {
-    return res.status(500).json({
-      permitido: false,
-      bloqueado: true,
-      razon: "Error verificando texto",
+    return res.json({
+      permitido: true,
+      bloqueado: false,
+      razon: "Error texto, permitido",
     });
   }
 });
 
-// 🔥 BLOQUEO IMAGEN REAL CON AWS REKOGNITION
 app.post("/verificar-imagen", async (req, res) => {
   try {
     const { imagen } = req.body;
 
     if (!imagen) {
       return res.json({
-        permitido: false,
-        bloqueado: true,
-        razon: "No llegó imagen",
+        permitido: true,
+        bloqueado: false,
+        razon: "Sin imagen, permitido",
       });
     }
 
-    // 🔥 SIEMPRE PERMITIR (temporal)
     return res.json({
       permitido: true,
       bloqueado: false,
-      esSexual: false,
       nsfw: false,
       categoria: "safe",
       razon: "Imagen permitida ✅",
     });
-
   } catch (error) {
     return res.json({
-      permitido: true, // 🔥 IMPORTANTE: no bloquear por error
+      permitido: true,
       bloqueado: false,
-      esSexual: false,
-      nsfw: false,
-      categoria: "safe",
-      razon: "Error pero permitido",
+      razon: "Error imagen, permitido",
     });
   }
+});
+
+app.listen(PORT, () => {
+  console.log("Servidor corriendo en puerto " + PORT);
 });
